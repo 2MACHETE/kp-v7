@@ -6,46 +6,42 @@
 #include <time.h>
 #define MAX_DATA_SIZE 1000 
 
-// Константы для имен файлов
-const char* DATA_FILE = "data.txt";
-const char* RESULT_FILE = "result.txt";
-
 /*
  * Структура для хранения параметров котла:
- * K - номер котла
  * ts - температура в градусах Цельсия
  * mp - давление в МПа
  * minp - чувствительность
- * indicator - значение индикатора отклонения
  */
 typedef struct
 {
-    int K;
     int ts;
     float mp;
     int minp;
-    double indicator;
 } params;
 
-params data_array[MAX_DATA_SIZE]; // Массив для хранения данных о котлах
-int data_count = 0;               // Счетчик данных массива
+int K_array[MAX_DATA_SIZE];            // Массив для хранения номеров котлов
+double indicator_array[MAX_DATA_SIZE]; // Массив для хранения значений индикатора
+int data_count = 0;                    // Счетчик данных в массивах
 
 // Прототипы функций
 double indicator(params params1);
-int write_array_to_file(const char* filename);
+void write_array_to_file();
 int manual_input(int minp, int* err);
-int monitoring(int minp, int* err, const char* filename);
-int generate_data(const char* filename);
-int write_array(params params1);
-int clear_result_file(const char* filename);
-int sort_data_array();
+int monitoring(int minp, int* err);
+int sensitive(int* minp);
+int put_error(int err);
+void generate_data();
+void write_array(int K, params params1);
+void clear_result_file();
+void clear_data_array();
+void sort_data_array();
 
 /*
  * Основная функция программы
  * Инициализирует чувствительность, обрабатывает выбор пользователя
  * и вызывает соответствующие функции в зависимости от выбора
  */
-int main()
+void main()
 {
     int minp;     // Чувствительность
     int err = 0;  // Счетчик ошибок
@@ -71,71 +67,43 @@ int main()
         switch (int_menu)
         {
         case 1:
-        {
-            int result = manual_input(minp, &err);                   // Ручной ввод
-            if (result > 0)
-            {
-                printf("Некорректный ввод");
-            }
-            else if (result == -1)
-            {
-                printf("Массив данных переполнен\n");
-            }
+            manual_input(minp, &err); // Ручной ввод данных
             break;
-        }
         case 2:
-            if (monitoring(minp, &err, DATA_FILE) == -1)             // Режим мониторинга
-            {
-                printf("Ошибка при мониторинге\n");
-            }
+            monitoring(minp, &err);   // Режим мониторинга
             break;
         case 3:
-            printf("Введите чувствительность (100 - стандарт): ");   // Изменение чувствительности
-            scanf("%d", &minp);
+            sensitive(&minp);         // Изменение чувствительности
             break;
         case 4:
-            printf("Количество ошибок при передачи данных = %d\n", err);    // Вывод количества ошибок
+            put_error(err);           // Вывод количества ошибок
             break;
         case 5:
-            if (generate_data(DATA_FILE) == -1)                      // Генерация значений в DATA_FILE
-            {
-                printf("Ошибка при генерации данных\n");
-            }
+            generate_data();          // Генерация случайных данных
             break;
         case 6:
-            if (clear_result_file(RESULT_FILE) == -1)                // Очистка RESULT_FILE
-            {
-                printf("Ошибка при очистке файла результатов\n");
-            }
+            clear_result_file();      // Очистка файла результатов
             break;
         case 7:
-            if (write_array_to_file(RESULT_FILE) == -1)              // Запись данных в RESULT_FILE
-            {
-                printf("Ошибка при записи данных в файл\n");
-            }
+            write_array_to_file();    // Запись данных в файл
             break;
         case 8:
-            if (sort_data_array() == -1)                             // Сортировка массива, накопленных данных
-            {
-                printf("Массив данных пуст\n");
-            }
+            sort_data_array();        // Сортировка данных
             break;
         case 9:
             printf("mk6, завершение работы...");
-            exit(0);                                                 // Выход из программы                             
+            exit(1);                 // Выход из программы
         default:
             printf("Введите соответствующий меню пункт\n");
             break;
         }
     }
-    return 0;
 }
 
 /*
  * Функция для ручного ввода данных
  * Позволяет пользователю вводить параметры котла вручную
  * В случае ошибки ввода увеличивает счетчик ошибок
- * Возвращает количество ошибок, если ввод некорректен, и -1 при переполнении массива
  */
 int manual_input(int minp, int* err)
 {
@@ -145,24 +113,27 @@ int manual_input(int minp, int* err)
         float mp;
         char pokaz[20];
         printf("Введите показатели (K_5#2.0mp#150ts) (0<=ts<=373): ");
+        /*
+        * Для корректной работы программы необходимо вводить
+        * значение ts в указанном сверху диапазоне
+        * При выходе за предел в функции indicator будет рассчитан
+        * отрицательный X, который потом попадет в функцию pow
+        * В языке Си при возведении в отрицательную степень
+        * числа с плавающей запятой pow возвращает NaN
+        */
         scanf("%20s", pokaz);
 
         // Парсинг введенной строки для извлечения параметров
         int count = sscanf(pokaz, "K_%d#%fmp#%dts", &K, &mp, &ts);
-        params params1 = { K, ts, mp, minp, 0.0 };
+        params params1 = { ts, mp, minp };
 
         // Проверка корректности ввода
         if (count != 3)
         {
             ++*err; // Увеличение счетчика ошибок при неверном вводе
-            return *err;
         }
-        params1.indicator = indicator(params1); // Вычисление индикатора
-        printf("Котёл %d: отклонение %.1lf процентов\n", K, params1.indicator);
-        if (write_array(params1) == -1)
-        {
-            return -1;
-        }
+        printf("Котёл %d: отклонение %.1lf процентов\n", K, indicator(params1));
+        write_array(K, params1);
 
         // Запрос на продолжение ввода
         puts("Ввести новые показатели? 1 - да, 2 - нет (меню)\n");
@@ -172,23 +143,24 @@ int manual_input(int minp, int* err)
             break;
         }
     }
-    return 0; // Ошибок нет => возвращаем 0
+    return 0;
 }
 
 /*
  * Функция для мониторинга данных из файла
- * Читает данные из файла и вычисляет отклонение для каждого котла
+ * Читает данные из файла "data.txt" и вычисляет отклонение для каждого котла
  * В случае ошибки в строке увеличивает счетчик ошибок
  */
-int monitoring(int minp, int* err, const char* filename)
+int monitoring(int minp, int* err)
 {
     int K, ts;
     float mp;
     char pokaz[50];
-    FILE* file = fopen(filename, "r");
+    FILE* file = fopen("data.txt", "r");
     if (file == NULL)
     {
-        return -1;
+        printf("Ошибка открытия файла\n");
+        return 0;
     }
 
     // Чтение файла построчно
@@ -198,30 +170,47 @@ int monitoring(int minp, int* err, const char* filename)
         int count = sscanf(pokaz, "K_%d#%fmp#%dts", &K, &mp, &ts);
         if (count == 3)
         {
-            params params1 = { K, ts, mp, minp, 0.0 };
-            params1.indicator = indicator(params1); // Вычисление индикатора
-            printf("Котёл %d: отклонение %.1lf процентов\n", K, params1.indicator);
-            if (write_array(params1) == -1)
-            {
-                fclose(file);
-                return -1;
-            }
+            params params1 = { ts, mp, minp };
+            printf("Котёл %d: отклонение %.1lf процентов\n", K, indicator(params1));
+            write_array(K, params1);
         }
         else
         {
-            // Увеличение счетчика ошибок при неверной строке
+            // Вывод строки с ошибкой
+            printf("Ошибка в строке: %s\n", pokaz);
             ++*err;
         }
     }
     fclose(file);
-    return 1;
+    return 0;
+}
+
+/*
+ * Функция для изменения чувствительности
+ * Позволяет пользователю ввести новое значение чувствительности
+ */
+int sensitive(int* minp)
+{
+    printf("Введите чувствительность (100 - стандарт): ");
+    scanf("%d", minp);
+    return 0;
+}
+
+/*
+ * Функция для вывода количества ошибок
+ * Выводит текущее значение счетчика ошибок
+ */
+int put_error(int err)
+{
+    printf("Количество ошибок = %d\n", err);
+    return 0;
 }
 
 /*
  * Функция для вычисления индикатора отклонения
  * На основе параметров котла вычисляет отклонение в процентах
  */
-double indicator(params params1) // Передаем структуру по значению
+double indicator(params params1)
 {
     // Вычисление приведенной температуры насыщения водяного пара tsf и x
     double tsf = (params1.ts + 273.15) / 647.14;
@@ -240,13 +229,14 @@ double indicator(params params1) // Передаем структуру по значению
 
 /*
  * Функция для генерации случайных данных
- * Записывает случайные значения параметров котлов в файл
+ * Записывает случайные значения параметров котлов в файл "data.txt"
  */
-int generate_data(const char* filename)
+void generate_data()
 {
-    FILE* file = fopen(filename, "w");
+    FILE* file = fopen("data.txt", "w");
     if (file == NULL) {
-        return -1;
+        printf("Ошибка открытия файла\n");
+        return;
     }
 
     // Инициализация генератора случайных чисел
@@ -263,91 +253,92 @@ int generate_data(const char* filename)
         fprintf(file, "K_%d#%.1fmp#%dts\n", i, mp, ts);
     }
     fclose(file);
-    printf("Данные сгенерированы в %s\n", filename);
-    return num_lines;
+    printf("Данные сгенерированы в data.txt\n");
+    return;
 }
 
 /*
- * Функция для записи данных в массив
- * Добавляет данные о котле в массив, если есть место
+ * Функция для записи данных в массивы
+ * Добавляет данные о котле в массивы, если есть место
  */
-int write_array(params params1)
+void write_array(int K, params params1)
 {
     if (data_count < MAX_DATA_SIZE)
     {
-        data_array[data_count] = params1;
+        K_array[data_count] = K;
+        indicator_array[data_count] = indicator(params1);
         data_count++;
-        return 1;
     }
     else {
-        return -1;
+        printf("Массивы данных переполнен\n");
     }
+    return;
 }
 
 /*
- * Функция для записи данных из массива в файл
- * Записывает данные о котлах в файл
+ * Функция для записи данных из массивов в файл
+ * Записывает данные о котлах в файл "result.txt"
  */
-int write_array_to_file(const char* filename)
+void write_array_to_file()
 {
-    FILE* file = fopen(filename, "a");
+    FILE* file = fopen("result.txt", "a");
     if (file == NULL)
     {
-        return -1;
+        printf("Ошибка открытия файла\n");
+        return;
     }
 
-    // Запись данных из массива в файл
+    // Запись данных из массивов в файл
     for (int i = 0; i < data_count; i++)
     {
-        fprintf(file, "Котёл %d: отклонение %.1lf процентов\n", data_array[i].K, data_array[i].indicator);
+        fprintf(file, "Котёл %d: отклонение %.1lf процентов\n", K_array[i], indicator_array[i]);
     }
     fclose(file);
-    printf("Данные записаны в файл %s\n", filename);
-    return 1;
+    printf("Данные записаны в файл result.txt\n");
+    return;
 }
 
 /*
  * Функция для очистки файла результатов
- * Очищает содержимое файла
+ * Очищает содержимое файла "result.txt"
  */
-int clear_result_file(const char* filename)
+void clear_result_file()
 {
-    FILE* file = fopen(filename, "w");
+    FILE* file = fopen("result.txt", "w");
     if (file == NULL)
     {
-        return -1;
+        printf("Ошибка открытия файла\n");
+        return;
     }
     fclose(file);
-    printf("Содержимое файла %s очищено\n", filename);
-    return 1;
+    printf("Содержимое очищено\n");
+    return;
 }
 
 /*
- * Функция для сортировки массива данных
+ * Функция для сортировки массивов данных
  * Сортирует данные по возрастанию значения индикатора отклонения
- * Возвращает 1 в случае успеха, -1 если массив пуст
  */
-int sort_data_array()
+void sort_data_array()
 {
-    // Проверка на пустоту массива
-    if (data_count == 0) {
-        return -1;
-    }
-
     // Сортировка пузырьком
     for (int i = 0; i < data_count - 1; i++)
     {
         for (int j = i + 1; j < data_count; j++)
         {
-            if (data_array[i].indicator > data_array[j].indicator)
+            if (indicator_array[i] > indicator_array[j])
             {
-                // Обмен значениями в массиве
-                params temp = data_array[i];
-                data_array[i] = data_array[j];
-                data_array[j] = temp;
+                // Обмен значениями в массивах
+                int temp_K = K_array[i];
+                K_array[i] = K_array[j];
+                K_array[j] = temp_K;
+
+                double temp_indicator = indicator_array[i];
+                indicator_array[i] = indicator_array[j];
+                indicator_array[j] = temp_indicator;
             }
         }
     }
     printf("Данные отсортированы по возрастанию\n");
-    return 1;
+    return;
 }
